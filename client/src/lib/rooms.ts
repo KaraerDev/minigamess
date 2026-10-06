@@ -338,49 +338,82 @@ export function subscribeRoom(code: string, uid: string, cb: (room: RoomState | 
   let roomReady = false;
   let secretReady = false;
   let disposed = false;
+  let fetchToken = 0;
+  let offSecret: (() => void) | null = null;
+  let secretDenied = false;
   const emit = () => {
     if (!roomReady || !secretReady) return;
     cb(roomSnap ? toRoomState(code, uid, roomSnap, secretSnap) : null);
   };
-  // Lobide sır okuma izni yoktur; reddedilen kalıcı dinleyici Firebase tarafından
-  // kapatılır ve bir daha canlanmaz. O yüzden her oda değişiminde sırrı tek
-  // seferlik okumayla tazele — tur başlayınca çizerin kelimesi böyle gelir.
+  // Bu istemci şu an sırrı okuyabilir mi? (kuralın istemci tarafı yansıması:
+  // özet aşamasında herkes, turda yalnızca çizer.)
+  const canReadSecret = (room: DbRoom | null): boolean => {
+    if (!room?.meta) return false;
+    const phase = room.meta.phase as string;
+    if (phase === "finishing" || phase === "recap") return true;
+    return phase === "round" && (room.round?.drawerId ?? null) === uid;
+  };
+  const attachSecret = () => {
+    if (disposed || offSecret) return;
+    secretDenied = false;
+    offSecret = onValue(
+      secretRef(code),
+      (snap: DataSnapshot) => {
+        if (disposed) return;
+        secretSnap = snap.val() as DbSecret;
+        secretReady = true;
+        emit();
+      },
+      () => {
+        // İzin yok (lobide tur sırrı): dinleyici Firebase tarafından kapatılır.
+        if (disposed) return;
+        secretSnap = null;
+        secretDenied = true;
+        offSecret = null;
+        secretReady = true;
+        emit();
+      },
+    );
+  };
+  // Tur başlayınca sır dinleyicisi çoktan ölmüş olabilir; ayrıca art arda gelen
+  // oda olayları üst üste okuma başlatır. Son okuma kazanır ve aktif turda
+  // bilinen kelime boş sonuçla ezilmez (geciken okuma yarışı).
   const refreshSecret = async () => {
+    const token = ++fetchToken;
+    let value: DbSecret;
     try {
-      const snap = await get(secretRef(code));
-      if (disposed) return;
-      secretSnap = snap.val() as DbSecret;
+      value = (await get(secretRef(code))).val() as DbSecret;
     } catch {
-      if (disposed) return;
-      secretSnap = null;
+      if (disposed || token !== fetchToken) return;
+      secretReady = true;
+      emit();
+      return;
     }
+    if (disposed || token !== fetchToken) return;
+    const roundActive =
+      roomSnap?.meta?.status === "playing" && roomSnap?.meta?.phase === "round" && roomSnap?.round;
+    if (value != null || !roundActive || secretSnap == null) secretSnap = value;
     secretReady = true;
     emit();
   };
   const offRoom = onValue(roomRef(code), (snap: DataSnapshot) => {
     roomSnap = snap.val() as DbRoom | null;
     roomReady = true;
-    emit();
-    void refreshSecret();
-  });
-  const offSecret = onValue(
-    secretRef(code),
-    (snap: DataSnapshot) => {
-      secretSnap = snap.val() as DbSecret;
-      secretReady = true;
-      emit();
-    },
-    () => {
-      // Sır okuma izni yoksa (tur sırrı) sırsız devam et.
+    const activeRound =
+      roomSnap?.meta?.status === "playing" && roomSnap?.round != null && roomSnap?.meta?.phase !== "lobby";
+    if (!activeRound) {
       secretSnap = null;
-      secretReady = true;
-      emit();
-    },
-  );
+    } else if (canReadSecret(roomSnap)) {
+      if (secretDenied) attachSecret();
+      void refreshSecret();
+    }
+    emit();
+  });
+  attachSecret();
   return () => {
     disposed = true;
     offRoom();
-    offSecret();
+    offSecret?.();
   };
 }
 

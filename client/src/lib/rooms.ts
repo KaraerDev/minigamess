@@ -299,14 +299,31 @@ export function subscribeRoom(code: string, uid: string, cb: (room: RoomState | 
   let secretSnap: DbSecret = null;
   let roomReady = false;
   let secretReady = false;
+  let disposed = false;
   const emit = () => {
     if (!roomReady || !secretReady) return;
     cb(roomSnap ? toRoomState(code, uid, roomSnap, secretSnap) : null);
+  };
+  // Lobide sır okuma izni yoktur; reddedilen kalıcı dinleyici Firebase tarafından
+  // kapatılır ve bir daha canlanmaz. O yüzden her oda değişiminde sırrı tek
+  // seferlik okumayla tazele — tur başlayınca çizerin kelimesi böyle gelir.
+  const refreshSecret = async () => {
+    try {
+      const snap = await get(secretRef(code));
+      if (disposed) return;
+      secretSnap = snap.val() as DbSecret;
+    } catch {
+      if (disposed) return;
+      secretSnap = null;
+    }
+    secretReady = true;
+    emit();
   };
   const offRoom = onValue(roomRef(code), (snap: DataSnapshot) => {
     roomSnap = snap.val() as DbRoom | null;
     roomReady = true;
     emit();
+    void refreshSecret();
   });
   const offSecret = onValue(
     secretRef(code),
@@ -323,6 +340,7 @@ export function subscribeRoom(code: string, uid: string, cb: (room: RoomState | 
     },
   );
   return () => {
+    disposed = true;
     offRoom();
     offSecret();
   };

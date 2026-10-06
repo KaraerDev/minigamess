@@ -9,6 +9,7 @@ import {
   clearBoard,
   createRoom as apiCreateRoom,
   joinRoom as apiJoinRoom,
+  leaveRoomRemote,
   nextRound,
   playAgain,
   pushStroke,
@@ -36,9 +37,14 @@ const games: { id: GameId; title: string; description: string; icon: string; tag
 ];
 const gameDuration: Record<GameId, number> = { draw: 65, words: 60, colors: 40, memory: 45 };
 
-function Brand() {
+function Brand({ onHome }: { onHome?: () => void }) {
   return (
-    <a className="brand" href="/" aria-label="Oyun Odası ana sayfa">
+    <a
+      className="brand"
+      href="/"
+      aria-label="Oyun Odası ana sayfa"
+      onClick={onHome ? (event) => { event.preventDefault(); onHome(); } : undefined}
+    >
       <span className="brand-mark" aria-hidden="true"><i /><i /><i /><b>✦</b></span>
       <span className="brand-word"><span>OYUN</span><span>ODASI</span></span>
     </a>
@@ -242,6 +248,8 @@ export default function Home() {
   };
 
   const leaveRoom = () => {
+    const roomCode = room?.code ?? code;
+    const playerId = uid;
     localStorage.removeItem("oyunoda-room");
     setCode(null);
     setRoom(null);
@@ -249,6 +257,8 @@ export default function Home() {
     setWordInputs({});
     setMemoryAnswer("");
     window.history.replaceState({}, "", "/");
+    // Odadaki kaydını da sil (hayalet oyuncu kalmasın); sessizce dene.
+    if (roomCode && playerId) void leaveRoomRemote(roomCode, playerId).catch(() => undefined);
   };
 
   const pointerPoint = (event: PointerEvent<HTMLCanvasElement>) => {
@@ -381,7 +391,7 @@ export default function Home() {
         </>
       ) : room.status === "lobby" ? (
         <>
-          <header className="room-header page-width"><Brand /><div className="room-header__center"><span className="status-dot" /> OYUN ODASI <b>/{room.code}</b></div><button type="button" className="back-link" onClick={leaveRoom}><ArrowLeft size={15} /> Çıkış</button></header>
+          <header className="room-header page-width"><Brand onHome={leaveRoom} /><div className="room-header__center"><span className="status-dot" /> OYUN ODASI <b>/{room.code}</b></div><button type="button" className="back-link" onClick={leaveRoom}><ArrowLeft size={15} /> Çıkış</button></header>
           <main className="room-page page-width lobby-page">
             <div className="room-page__heading"><div><div className="eyebrow"><span className="eyebrow-dot" /> MASA KURULUYOR</div><h1>Ekibi topla<span className="heading-period">.</span></h1><p>Kodu paylaş. Herkes otursun, hazır olan el kaldırsın.</p></div><button type="button" className={`invite-code ${copyDone ? "is-copied" : ""}`} onClick={copyInvite} aria-label="Davet bağlantısını kopyala"><span><small>ODA KODU · PAYLAŞ</small><strong>{room.code.split("").join(" ")}</strong></span><span className="invite-copy-icon">{copyDone ? <Check size={18} /> : <Copy size={18} />}</span></button></div>
             <div className="lobby-grid">
@@ -413,7 +423,7 @@ export default function Home() {
         </>
       ) : room.status === "playing" ? (
         <>
-          <header className="room-header game-header page-width"><Brand /><div className="game-header__center"><span className="live-tag"><i /> CANLI TUR</span><span className="game-header__name">{game.title}</span><span className="game-header__round">TUR {String(room.currentRound).padStart(2, "0")} <small>/ {room.rounds}</small></span></div><button type="button" className="code-chip" onClick={copyInvite}><Users size={14} /> {room.code} <Copy size={12} /></button></header>
+          <header className="room-header game-header page-width"><Brand onHome={leaveRoom} /><div className="game-header__center"><span className="live-tag"><i /> CANLI TUR</span><span className="game-header__name">{game.title}</span><span className="game-header__round">TUR {String(room.currentRound).padStart(2, "0")} <small>/ {room.rounds}</small></span></div><button type="button" className="code-chip" onClick={copyInvite}><Users size={14} /> {room.code} <Copy size={12} /></button></header>
           <main className="game-page page-width">
             <div className="game-title-row"><div><div className="eyebrow"><span className="eyebrow-dot" /> {room.phase === "recap" ? "TUR TAMAMLANDI" : game.tag}</div><h1>{room.phase === "recap" ? "Nefes al." : game.title}<span className="heading-period">.</span></h1><p>{room.phase === "recap" ? "Bir sonraki tur başlamak üzere." : round?.prompt}</p></div><div className={`timer-card ${timeLeft <= 10 && room.phase === "round" ? "timer-card--urgent" : ""}`}><Clock3 size={17} /><span><small>KALAN SÜRE</small><strong>{room.phase === "recap" ? "↗" : `0:${String(timeLeft).padStart(2, "0")}`}</strong></span></div></div>
             <div className="timer-track"><span style={{ width: `${room.phase === "recap" ? 0 : timePercent}%` }} /></div>
@@ -461,7 +471,7 @@ export default function Home() {
         </>
       ) : (
         <>
-          <header className="room-header page-width"><Brand /><div className="room-header__center"><span className="status-dot" /> FİNAL TURU TAMAMLANDI</div><button type="button" className="back-link" onClick={leaveRoom}><ArrowLeft size={15} /> Ana sayfa</button></header>
+          <header className="room-header page-width"><Brand onHome={leaveRoom} /><div className="room-header__center"><span className="status-dot" /> FİNAL TURU TAMAMLANDI</div><button type="button" className="back-link" onClick={leaveRoom}><ArrowLeft size={15} /> Ana sayfa</button></header>
           <main className="room-page results-page page-width"><div className="results-hero"><span className="results-flower">✿</span><div className="eyebrow"><span className="eyebrow-dot" /> ÖRTÜYÜ TOPLAMADAN</div><h1>Günün yıldızı<br /><em>{sortedPlayers[0]?.nickname ?? ""}</em><span className="heading-period">!</span></h1><p>Bu grubun elinden kalem düşmemiş. Yeni tur mu?</p><span className="winner-crown"><Crown size={22} /></span></div>
             <section className="results-board"><div className="results-board__heading"><span className="panel-kicker"><Medal size={14} /> PİKNİK SKORU</span><span>{room.gameTitle} · {room.rounds} tur</span></div>{sortedPlayers.map((player, index) => <div className={`result-row ${index === 0 ? "result-row--winner" : ""}`} key={player.id}><span className="result-rank">{index === 0 ? <Crown size={18} /> : `${index + 1}.`}</span><span className="result-avatar">{player.avatar}</span><strong>{player.nickname}{player.id === uid && <small> SEN</small>}</strong><span className="result-points">{player.score}<small> PUAN</small></span></div>)}<div className="results-board__summary"><Sparkles size={15} /><span>{room.recap?.message ?? "Aynı ekiple bir tur daha atmaya ne dersiniz?"}</span></div></section>
             <div className="results-actions">{amHost ? <button type="button" className="button button--primary" onClick={() => uid && void withFeedback(() => playAgain(room.code, uid), "Rövanş masası kuruldu!")}><RefreshCw size={17} /> Aynı ekiple rövanş <ArrowRight size={17} /></button> : <span className="waiting-rematch"><Clock3 size={15} /> Oda sahibinden rövanş bekleniyor…</span>}<button type="button" className="button button--outline" onClick={copyInvite}><Copy size={16} /> Odayı paylaş</button><button type="button" className="text-button" onClick={leaveRoom}>Ana sayfaya dön</button></div>

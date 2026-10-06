@@ -294,6 +294,44 @@ export async function joinRoom(code: string, profile: Profile): Promise<{ code: 
   return { code: clean, uid };
 }
 
+/**
+ * Odadan ayrıl: kendi oyuncu düğümünü sil. Kimse kalmazsa odayı ve sırrı
+ * tamamen kaldır; ayrılan oda sahibiyse sahipliği kalan ilk oyuncuya devret.
+ * (Kurallar: kendi düğümünü silmek her zaman serbesttir.)
+ */
+export async function leaveRoomRemote(code: string, uid: string): Promise<void> {
+  const clean = safeCode(code);
+  const snap = await get(roomRef(clean));
+  const room = snap.val() as DbRoom | null;
+  if (!room?.players?.[uid]) return;
+  const remaining = Object.keys(room.players).filter((id) => id !== uid);
+  if (remaining.length === 0) {
+    // Kurallar tüm-oda silmeye değil, tekil düğüm yazmaya izin verir.
+    // Önce kendi kaydını sil (her zaman serbest), sonra odayı süpürmeyi dene.
+    await rootUpdate({ [`oyunoda/rooms/${clean}/players/${uid}`]: null }).catch(() => undefined);
+    await rootUpdate({
+      [`oyunoda/rooms/${clean}/meta`]: null,
+      [`oyunoda/rooms/${clean}/round`]: null,
+      [`oyunoda/rooms/${clean}/recap`]: null,
+      [`oyunoda/secrets/${clean}`]: null,
+    }).catch(() => undefined);
+    return;
+  }
+  await rootUpdate({ [`oyunoda/rooms/${clean}/players/${uid}`]: null });
+  if (room.meta?.ownerId === uid) {
+    const next = remaining[0];
+    const transfer: Record<string, unknown> = { [`oyunoda/rooms/${clean}/meta/ownerId`]: next };
+    if ((room.meta as DbRoom["meta"])?.status === "lobby") {
+      // Aynı güncellemede olmalı: kurallar yazma anındaki eski sahibe izin verir.
+      transfer[`oyunoda/rooms/${clean}/players/${next}/ready`] = true;
+    }
+    // Oyunda hazır bayrağı yazılamazsa sahipliği tek başına devretmeyi dene.
+    await rootUpdate(transfer).catch(() =>
+      rootUpdate({ [`oyunoda/rooms/${clean}/meta/ownerId`]: next }).catch(() => undefined),
+    );
+  }
+}
+
 export function subscribeRoom(code: string, uid: string, cb: (room: RoomState | null) => void): () => void {
   let roomSnap: DbRoom | null = null;
   let secretSnap: DbSecret = null;
@@ -441,12 +479,27 @@ function stripSecrets(data: RoundData) {
  * Kurallar alan bazında çalıştığı için boş nesne/dizi yazmak reddedilebilir;
  * bu alanlar ilk kullanımda kendi kurallarıyla oluşur.
  */
-function roundPatch(code: string, data: RoundData, extra: Record<string, unknown>): Record<string, unknown> {
+function roundPatch(
+  code: string,
+  data: RoundData,
+  extra: Record<string, unknown>,
+  clearStale = false,
+): Record<string, unknown> {
   const { submissions, correctOrder, strokes, ...rest } = stripSecrets(data);
   void submissions;
   void correctOrder;
   const patch = prefixed(`oyunoda/rooms/${code}/round`, { ...rest, ...extra });
   if (strokes.length) patch[`oyunoda/rooms/${code}/round/strokes`] = strokes;
+  if (clearStale) {
+    // update() birleştirir: önceki turun koleksiyonları temizlenmezse yeni tura
+    // sızar (eski tahminler/cevaplar/çizimler). Tur geçişini kazanan istemci
+    // (phase "advancing", claimedBy kendisi) kurallarla bunları silebilir.
+    patch[`oyunoda/rooms/${code}/round/strokes`] = strokes;
+    patch[`oyunoda/rooms/${code}/round/submissions`] = null;
+    patch[`oyunoda/rooms/${code}/round/guesses`] = null;
+    patch[`oyunoda/rooms/${code}/round/results`] = null;
+    patch[`oyunoda/rooms/${code}/round/correctOrder`] = null;
+  }
   return patch;
 }
 
@@ -763,7 +816,7 @@ async function advanceFrom(room: DbRoom, code: string): Promise<void> {
     [`oyunoda/rooms/${code}/meta/phase`]: "round",
     [`oyunoda/rooms/${code}/meta/round`]: current + 1,
     [`oyunoda/rooms/${code}/meta/endsAt`]: endsAt,
-    ...roundPatch(code, data, { number: current + 1, totalRounds, endsAt }),
+    ...roundPatch(code, data, { number: current + 1, totalRounds, endsAt }, true),
     [`oyunoda/secrets/${code}`]: secret,
     [`oyunoda/rooms/${code}/recap`]: null,
   });

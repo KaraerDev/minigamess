@@ -18,9 +18,10 @@
           "round": {
             ".write": "auth != null && !newData.exists() && root.child('oyunoda/rooms').child($code).child('meta').child('ownerId').val() == auth.uid",
             "strokes": {
-              ".write": "auth != null && (root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == auth.uid || root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == null)"
+              ".write": "auth != null && (root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == auth.uid || root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == null || (root.child('oyunoda/rooms').child($code).child('meta').child('phase').val() == 'advancing' && root.child('oyunoda/rooms').child($code).child('meta').child('claimedBy').val() == auth.uid))"
             },
             "submissions": {
+              ".write": "auth != null && root.child('oyunoda/rooms').child($code).child('meta').child('phase').val() == 'advancing' && root.child('oyunoda/rooms').child($code).child('meta').child('claimedBy').val() == auth.uid",
               "$uid": {
                 ".write": "auth != null && auth.uid == $uid && (!data.exists() || data.val() == null)",
                 ".validate": "newData.hasChildren(['value', 'at']) && newData.child('at').isNumber()",
@@ -31,19 +32,21 @@
               }
             },
             "guesses": {
+              ".write": "auth != null && root.child('oyunoda/rooms').child($code).child('meta').child('phase').val() == 'advancing' && root.child('oyunoda/rooms').child($code).child('meta').child('claimedBy').val() == auth.uid",
               "$uid": {
                 ".write": "auth != null && auth.uid == $uid",
                 ".validate": "newData.hasChildren(['text', 'at']) && newData.child('text').isString() && newData.child('text').val().length >= 1 && newData.child('text').val().length <= 48 && newData.child('at').isNumber()"
               }
             },
             "results": {
+              ".write": "auth != null && root.child('oyunoda/rooms').child($code).child('meta').child('phase').val() == 'advancing' && root.child('oyunoda/rooms').child($code).child('meta').child('claimedBy').val() == auth.uid",
               "$uid": {
                 ".write": "auth != null && root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == auth.uid",
                 ".validate": "newData.hasChildren(['correct', 'at']) && newData.child('correct').isBoolean() && newData.child('at').isNumber()"
               }
             },
             "correctOrder": {
-              ".write": "auth != null && root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == auth.uid"
+              ".write": "auth != null && (root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == auth.uid || (root.child('oyunoda/rooms').child($code).child('meta').child('phase').val() == 'advancing' && root.child('oyunoda/rooms').child($code).child('meta').child('claimedBy').val() == auth.uid))"
             },
             "memoryHidden": {
               ".write": "auth != null"

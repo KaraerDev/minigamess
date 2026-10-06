@@ -7,3 +7,5 @@ overrides:
 onlyBuiltDependencies:
   - '@tailwindcss/oxide'
   - esbuild
+  - '@firebase/util'
+  - protobufjs

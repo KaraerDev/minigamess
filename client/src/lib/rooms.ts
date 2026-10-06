@@ -358,14 +358,24 @@ export async function updateSettings(
   if (Object.keys(patch).length) await rootUpdate(patch);
 }
 
-/** Faz geçişini transaction ile tek-kazananlı yapar. */
-async function claimPhase(code: string, from: string, to: string): Promise<boolean> {
-  const result = await runTransaction(ref(getDb(), `oyunoda/rooms/${code}/meta`), (meta) => {
-    const m = meta as DbRoom["meta"] | null;
-    if (!m || m.phase !== from) return undefined;
-    return { ...m, phase: to };
-  });
-  return result.committed;
+/** Faz geçişini kilitler: doğrudan yazım kurallarla atomik denetlenir
+ * (kurallar sunucu verisine göre değerlendirir), kazanan claimedBy ile belli olur.
+ * Realtime Database transaction'ları soğuk önbellekte yerel null görüp
+ * sunucuya sormadan vazgeçtiği için claim'ler transaction ile yapılmaz. */
+async function claimPhase(code: string, uid: string, _from: string, to: string): Promise<boolean> {
+  void _from;
+  try {
+    await rootUpdate({
+      [`oyunoda/rooms/${code}/meta/phase`]: to,
+      [`oyunoda/rooms/${code}/meta/claimedBy`]: uid,
+      [`oyunoda/rooms/${code}/meta/phaseAt`]: Date.now(),
+    });
+  } catch {
+    return false;
+  }
+  const snap = await get(ref(getDb(), `oyunoda/rooms/${code}/meta`));
+  const meta = snap.val() as DbRoom["meta"] | null;
+  return meta?.phase === to && (meta as { claimedBy?: string }).claimedBy === uid;
 }
 
 export async function startGame(code: string, uid: string): Promise<void> {
@@ -386,7 +396,7 @@ export async function startGame(code: string, uid: string): Promise<void> {
   }
   const gameId = validGame(room.meta.gameId) ? room.meta.gameId : "draw";
   const { data, secret, durationMs } = createRound(gameId, 1, players);
-  if (!(await claimPhase(code, "lobby", "round"))) throw new Error("Oyun zaten başlatılmış.");
+  if (!(await claimPhase(code, uid, "lobby", "round"))) throw new Error("Oyun zaten başlatılmış.");
   const endsAt = Date.now() + durationMs;
   await rootUpdate({
     ...Object.fromEntries(players.map((p) => [`oyunoda/rooms/${code}/players/${p.id}/score`, 0])),
@@ -429,7 +439,7 @@ export async function nextRound(code: string, uid: string): Promise<void> {
     throw new Error("Bir sonraki tura geçiş zamanı değil.");
   }
   if (room.meta.ownerId !== uid) throw new Error("Bir sonraki turu oda sahibi başlatabilir.");
-  if (!(await claimPhase(code, "recap", "advancing"))) {
+  if (!(await claimPhase(code, uid, "recap", "advancing"))) {
     throw new Error("Bir sonraki tura geçiş zamanı değil.");
   }
   const fresh = await get(roomRef(code));
@@ -548,7 +558,7 @@ async function submitOnce(code: string, uid: string, gameId: GameId, value: unkn
   const playerCount = Object.keys(r?.players ?? {}).length;
   const answerCount = Object.keys((r?.round?.submissions as Record<string, unknown> | undefined) ?? {}).length;
   if (playerCount > 0 && answerCount >= playerCount) {
-    await finishRound(code, "Herkes cevabını verdi!");
+    await finishRound(code, uid, "Herkes cevabını verdi!");
   }
 }
 
@@ -576,7 +586,7 @@ export function startDriver(code: string, uid: string): () => void {
 
     if (meta.status === "playing" && meta.phase === "round" && round) {
       const endsAt = (round.endsAt ?? meta.endsAt ?? 0) as number;
-      if (endsAt > 0) later(endsAt - Date.now(), () => void finishRound(code));
+      if (endsAt > 0) later(endsAt - Date.now(), () => void finishRound(code, uid));
       if (meta.gameId === "memory" && !round.memoryHidden) {
         later(MEMORY_HIDE_AFTER, async () => {
           const cur = (await get(roomRef(code))).val() as DbRoom | null;
@@ -591,7 +601,7 @@ export function startDriver(code: string, uid: string): () => void {
     }
     if (meta.status === "playing" && meta.phase === "recap") {
       const endsAt = (meta.endsAt ?? 0) as number;
-      if (endsAt > 0) later(endsAt - Date.now(), () => void advanceFromRemote(code));
+      if (endsAt > 0) later(endsAt - Date.now(), () => void advanceFromRemote(code, uid));
     }
   });
 
@@ -639,13 +649,13 @@ async function judgeDrawGuesses(code: string, uid: string, judged: Set<string>):
   const current = (await get(roomRef(code))).val() as DbRoom | null;
   const order = ((current?.round?.correctOrder ?? []) as string[]).length;
   if (current?.meta?.phase === "round" && order >= playerIds.length && playerIds.length > 0) {
-    await finishRound(code, "Herkes kelimeyi kapmış!");
+    await finishRound(code, uid, "Herkes kelimeyi kapmış!");
   }
 }
 
 /** Süre dolumu veya tüm-cevap durumunda turu bitirir (tek kazananlı). */
-export async function finishRound(code: string, message = "Süre doldu!"): Promise<void> {
-  if (!(await claimPhase(code, "round", "finishing"))) return;
+export async function finishRound(code: string, uid: string, message = "Süre doldu!"): Promise<void> {
+  if (!(await claimPhase(code, uid, "round", "finishing"))) return;
   const snap = await get(roomRef(code));
   const room = snap.val() as DbRoom | null;
   if (!room?.meta || !room.round) return;
@@ -695,8 +705,8 @@ export async function finishRound(code: string, message = "Süre doldu!"): Promi
   });
 }
 
-async function advanceFromRemote(code: string): Promise<void> {
-  if (!(await claimPhase(code, "recap", "advancing"))) return;
+async function advanceFromRemote(code: string, uid: string): Promise<void> {
+  if (!(await claimPhase(code, uid, "recap", "advancing"))) return;
   const snap = await get(roomRef(code));
   const room = snap.val() as DbRoom | null;
   if (!room?.meta) return;

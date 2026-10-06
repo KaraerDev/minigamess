@@ -11,19 +11,23 @@
           },
           "players": {
             "$uid": {
-              ".write": "auth != null && (auth.uid == $uid || ((data.exists() && newData.child('nickname').val() == data.child('nickname').val() && newData.child('avatar').val() == data.child('avatar').val() && newData.child('ready').val() == data.child('ready').val() && newData.child('score').val() >= data.child('score').val()) || (root.child('oyunoda/rooms').child($code).child('meta').child('ownerId').val() == auth.uid && root.child('oyunoda/rooms').child($code).child('meta').child('status').val() == 'finished')))",
+              ".write": "auth != null && ((root.child('oyunoda/rooms').child($code).child('meta').child('ownerId').val() == auth.uid && root.child('oyunoda/rooms').child($code).child('meta').child('status').val() == 'lobby') || (auth.uid == $uid && (!data.exists() ? root.child('oyunoda/rooms').child($code).child('meta').child('status').val() == 'lobby' : true)) || (data.exists() && newData.child('nickname').val() == data.child('nickname').val() && newData.child('avatar').val() == data.child('avatar').val() && newData.child('ready').val() == data.child('ready').val() && newData.child('score').val() >= data.child('score').val()) || (root.child('oyunoda/rooms').child($code).child('meta').child('ownerId').val() == auth.uid && root.child('oyunoda/rooms').child($code).child('meta').child('status').val() == 'finished'))",
               ".validate": "newData.hasChildren(['nickname', 'avatar', 'score', 'ready']) && newData.child('nickname').isString() && newData.child('nickname').val().length >= 1 && newData.child('nickname').val().length <= 18 && newData.child('avatar').isString() && newData.child('score').isNumber() && newData.child('score').val() >= 0 && newData.child('ready').isBoolean()"
             }
           },
           "round": {
             ".write": "auth != null && !newData.exists() && root.child('oyunoda/rooms').child($code).child('meta').child('ownerId').val() == auth.uid",
             "strokes": {
-              ".write": "auth != null && root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == auth.uid"
+              ".write": "auth != null && (root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == auth.uid || root.child('oyunoda/rooms').child($code).child('round').child('drawerId').val() == null)"
             },
             "submissions": {
               "$uid": {
                 ".write": "auth != null && auth.uid == $uid && (!data.exists() || data.val() == null)",
-                ".validate": "newData.hasChildren(['value', 'at']) && newData.child('at').isNumber()"
+                ".validate": "newData.hasChildren(['value', 'at']) && newData.child('at').isNumber()",
+                "correct": {
+                  ".write": "auth != null && (root.child('oyunoda/rooms').child($code).child('meta').child('phase').val() == 'finishing' || root.child('oyunoda/rooms').child($code).child('meta').child('phase').val() == 'recap')",
+                  ".validate": "newData.isBoolean()"
+                }
               }
             },
             "guesses": {

@@ -707,6 +707,12 @@ export function startDriver(code: string, uid: string): () => void {
       const endsAt = (meta.endsAt ?? 0) as number;
       if (endsAt > 0) later(endsAt - Date.now(), () => void advanceFromRemote(code, uid));
     }
+    // Takılı kalan tur geçişini kurtar: advancing 35 sn'yi geçtiyse yeniden dene.
+    // (advanceFromRemote yalnızca özet aşamasında ya da bayat claim'de ilerler.)
+    if (meta.status === "playing" && (meta.phase as string) === "advancing") {
+      const at = ((meta as unknown as { phaseAt?: number }).phaseAt ?? 0) as number;
+      later(at + 35_000 - Date.now(), () => void advanceFromRemote(code, uid));
+    }
   });
 
   return () => {
@@ -809,7 +815,19 @@ export async function finishRound(code: string, uid: string, message = "Süre do
   });
 }
 
+function isDenied(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === "PERMISSION_DENIED";
+}
+
 async function advanceFromRemote(code: string, uid: string): Promise<void> {
+  const pre = await get(roomRef(code));
+  const preMeta = (pre.val() as DbRoom | null)?.meta as
+    | (DbRoom["meta"] & { claimedBy?: string; phaseAt?: number })
+    | undefined;
+  const phase = preMeta?.phase;
+  const staleAdvance =
+    (phase as string) === "advancing" && Date.now() - (preMeta?.phaseAt ?? 0) > 30_000;
+  if (phase !== "recap" && !staleAdvance) return;
   if (!(await claimPhase(code, uid, "recap", "advancing"))) return;
   const snap = await get(roomRef(code));
   const room = snap.val() as DbRoom | null;
@@ -845,12 +863,25 @@ async function advanceFrom(room: DbRoom, code: string): Promise<void> {
   const gameId = validGame(meta.gameId) ? meta.gameId : "draw";
   const { data, secret, durationMs } = createRound(gameId, current + 1, players);
   const endsAt = Date.now() + durationMs;
-  await rootUpdate({
+  const base = {
     [`oyunoda/rooms/${code}/meta/phase`]: "round",
     [`oyunoda/rooms/${code}/meta/round`]: current + 1,
     [`oyunoda/rooms/${code}/meta/endsAt`]: endsAt,
-    ...roundPatch(code, data, { number: current + 1, totalRounds, endsAt }, true),
     [`oyunoda/secrets/${code}`]: secret,
     [`oyunoda/rooms/${code}/recap`]: null,
-  });
+  };
+  try {
+    await rootUpdate({
+      ...base,
+      ...roundPatch(code, data, { number: current + 1, totalRounds, endsAt }, true),
+    });
+  } catch (error) {
+    if (!isDenied(error)) throw error;
+    // Eski kurallar (tur temizliği henüz yayınlanmamış): oyun dursun diye
+    // temizliksiz devam et; yeni kelime ve çizer yine de gelir.
+    await rootUpdate({
+      ...base,
+      ...roundPatch(code, data, { number: current + 1, totalRounds, endsAt }),
+    });
+  }
 }

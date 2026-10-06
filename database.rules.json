@@ -1,0 +1,62 @@
+{
+  "rules": {
+    "rooms": {
+      ".read": "auth != null",
+      "$code": {
+        ".validate": "$code.matches(/^[A-Z0-9]{4}$/)",
+        "meta": {
+          ".write": "auth != null && (!data.exists() || data.child('ownerId').val() == auth.uid || (data.child('phase').val() == 'round' && newData.child('phase').val() == 'finishing') || (data.child('phase').val() == 'finishing' && newData.child('phase').val() == 'recap') || (data.child('phase').val() == 'recap' && newData.child('phase').val() == 'advancing') || (data.child('phase').val() == 'advancing' && (newData.child('phase').val() == 'round' || newData.child('phase').val() == 'finished')))",
+          ".validate": "newData.hasChildren(['gameId', 'rounds', 'status', 'phase', 'round', 'ownerId']) && newData.child('gameId').val().matches(/^(draw|words|colors|memory)$/) && (newData.child('rounds').val() == 3 || newData.child('rounds').val() == 5 || newData.child('rounds').val() == 8) && newData.child('status').val().matches(/^(lobby|playing|finished)$/) && newData.child('phase').val().matches(/^(lobby|round|recap|finishing|advancing|finished)$/) && newData.child('round').isNumber() && newData.child('ownerId').isString()"
+        },
+        "players": {
+          "$uid": {
+            ".write": "auth != null && (auth.uid == $uid || ((data.exists() && newData.child('nickname').val() == data.child('nickname').val() && newData.child('avatar').val() == data.child('avatar').val() && newData.child('ready').val() == data.child('ready').val() && newData.child('score').val() >= data.child('score').val()) || (root.child('rooms').child($code).child('meta').child('ownerId').val() == auth.uid && root.child('rooms').child($code).child('meta').child('status').val() == 'finished')))",
+            ".validate": "newData.hasChildren(['nickname', 'avatar', 'score', 'ready']) && newData.child('nickname').isString() && newData.child('nickname').val().length >= 1 && newData.child('nickname').val().length <= 18 && newData.child('avatar').isString() && newData.child('score').isNumber() && newData.child('score').val() >= 0 && newData.child('ready').isBoolean()"
+          }
+        },
+        "round": {
+          ".write": "auth != null && !newData.exists() && root.child('rooms').child($code).child('meta').child('ownerId').val() == auth.uid",
+          "strokes": {
+            ".write": "auth != null && root.child('rooms').child($code).child('round').child('drawerId').val() == auth.uid"
+          },
+          "submissions": {
+            "$uid": {
+              ".write": "auth != null && auth.uid == $uid && (!data.exists() || data.val() == null)",
+              ".validate": "newData.hasChildren(['value', 'at']) && newData.child('at').isNumber()"
+            }
+          },
+          "guesses": {
+            "$uid": {
+              ".write": "auth != null && auth.uid == $uid",
+              ".validate": "newData.hasChildren(['text', 'at']) && newData.child('text').isString() && newData.child('text').val().length >= 1 && newData.child('text').val().length <= 48 && newData.child('at').isNumber()"
+            }
+          },
+          "results": {
+            "$uid": {
+              ".write": "auth != null && root.child('rooms').child($code).child('round').child('drawerId').val() == auth.uid",
+              ".validate": "newData.hasChildren(['correct', 'at']) && newData.child('correct').isBoolean() && newData.child('at').isNumber()"
+            }
+          },
+          "correctOrder": {
+            ".write": "auth != null && root.child('rooms').child($code).child('round').child('drawerId').val() == auth.uid"
+          },
+          "memoryHidden": {
+            ".write": "auth != null"
+          },
+          "$field": {
+            ".write": "auth != null"
+          }
+        },
+        "recap": {
+          ".write": "auth != null"
+        }
+      }
+    },
+    "secrets": {
+      "$code": {
+        ".read": "auth != null && (root.child('rooms').child($code).child('meta').child('phase').val() == 'finishing' || root.child('rooms').child($code).child('meta').child('phase').val() == 'recap' || root.child('rooms').child($code).child('round').child('drawerId').val() == auth.uid)",
+        ".write": "auth != null"
+      }
+    }
+  }
+}

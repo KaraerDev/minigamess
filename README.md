@@ -2,6 +2,8 @@
 
 Arkadaşlarını takma ad ve avatarla masaya çağır; oda kodunu paylaş ve kısa mini oyunlarda kapış. Hesap yok, tek kullanımlık oda kodu var.
 
+Bu sürüm **sunucusuzdur**: Express kaldırıldı. Odalar **Firebase Realtime Database** üzerinde tutulur, giriş **Anonymous Auth** ile yapılır, arayüz **Firebase Hosting**'de yayınlanır.
+
 ## Oyunlar
 
 - **Çiz Bakalım:** Çizer gizli kelimeyi ortak tahtaya çizer; diğerleri süre içinde tahmin eder.
@@ -14,15 +16,28 @@ Arkadaşlarını takma ad ve avatarla masaya çağır; oda kodunu paylaş ve kı
 1. Bir oyuncu takma ad/karakter seçip oda kurar.
 2. Oda kodu veya `/?oda=KOD` davet bağlantısı gruba gönderilir.
 3. Arkadaşlar katılır, hazır durumunu seçer; oda sahibi oyunu ve 3/5/8 turu belirler.
-4. Oda sahibi oyunu başlatır. Oyun durumu ve tur sonuçları aynı odadaki herkese anlık iletilir.
+4. Oda sahibi oyunu başlatır. Tur sayacı, cevaplar ve skorlar odadaki herkese anlık iletilir.
 5. Final sıralaması çıkar; oda sahibi aynı ekiple rövanş açabilir.
 
-Her odada 2–8 kişi oynar. Odalar ve puanlar sunucu belleğinde tutulur; sunucu yeniden başladığında aktif oyun oturumları temizlenir. Bu prototip hesap, kalıcı profil veya veritabanı kullanmaz.
+Her odada 2–8 kişi oynar. Odalar Firebase'de tutulur; kalıcı profil veya hesap yoktur.
+
+## Mimari
+
+- **İstemci:** React + Vite + TypeScript (`client/`), statik derlenir → `dist/public/`
+- **Veri:** Firebase Realtime Database — `rooms/{kod}/{meta, players, round, recap}` + `secrets/{kod}` (tur sırları)
+- **Kimlik:** Firebase Anonymous Auth (her oyuncunun uid'si oyuncu kimliğidir)
+- **Senkron:** RTDB dinleyicileri (`onValue`); kritik faz geçişleri transaction ile tek-kazananlı
+- **Sürücü:** Süre bitimi, sayı gizleme, tur ilerletme ve çiz-hakemliği bağlı tüm istemcilerde çalışır (`startDriver`); yarışı kazanan transaction yazar
+- **Kurallar:** `database.rules.json` — tur sırları yalnızca çizerde veya özet aşamasında okunur, skorlar yalnızca artabilir
+- **Saf oyun mantığı:** `shared/game.ts` (tur kurma + puanlama; sunucusuz, testli)
+
+Bilinen prototip sınırları: jüri/sürücü istemcide çalıştığı için kötü niyetli istemciye karşı tam koruma yoktur (hile önleme için 2. faz olarak Cloud Functions önerilir); 4 harfli oda kodları tahmin edilebilir.
 
 ## Gereksinimler
 
 - Node.js 20+ (önerilen: 22 LTS)
-- pnpm 10 (`corepack enable` ile gelir veya `npm i -g pnpm`)
+- pnpm 10
+- Bir Firebase projesi (ücretsiz Spark planı yeterli: Realtime Database + Hosting + Anonymous Auth)
 
 ## Kurulum
 
@@ -31,66 +46,67 @@ pnpm install
 cp .env.example .env   # Windows: copy .env.example .env
 ```
 
-`.env` zorunlu değil; `PORT` belirtilmezse 3000 kullanılır. Veritabanı gerekmez.
+`.env` dosyasına Firebase Console > Proje ayarları > Web uygulaması değerlerini yazın:
+
+```bash
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=....firebaseapp.com
+VITE_FIREBASE_DATABASE_URL=https://....firebasedatabase.app
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_APP_ID=...
+```
+
+Firebase Console'da şunları açın:
+
+1. **Authentication > Sign-in method > Anonymous** → Etkinleştir
+2. **Realtime Database > Create Database** → Bölge seçin, test modunda başlayabilirsiniz
+3. **Realtime Database > Rules** sekmesine `database.rules.json` içeriğini yapıştırıp Yayınlayın
 
 ## Geliştirme
 
 ```bash
-pnpm dev      # Express + Vite: http://localhost:3000
+pnpm dev      # Vite: http://localhost:5173
 pnpm check    # TypeScript tip denetimi
-pnpm test     # Vitest ile birim testleri
-pnpm build    # Üretim derlemesi (client + server -> dist/)
-pnpm start    # Üretim sunucusunu çalıştırır (önce build gerekir)
+pnpm test     # Vitest (shared/game.test.ts)
+pnpm build    # Statik derleme -> dist/public/
+pnpm preview  # Derlemeyi yerelde önizle
 ```
 
-Express, geliştirme sırasında Vite arayüzünü ve `/api/game` uçlarını sunar. Oda yayınları Server-Sent Events ile eşitlenir.
+Not: `pnpm dev`/`preview` gerçek Firebase projesine bağlanır (emülatör kurulu değil).
 
-## Proje yapısı
-
-- `client/src/pages/Home.tsx` — giriş, lobi, oyun ekranları, sonuç ve rövanş arayüzü
-- `client/src/index.css` — tema, tipografi ve mobil/masaüstü kuralları
-- `server/gameRooms.ts` — oda yaşam döngüsü, dört oyunun kuralları, tur/süre/skor, SSE yayını
-- `server/gameRooms.test.ts` — lobi akışı ve doğrulama testleri
-- `server/_core/index.ts` — Express giriş noktası (`/api/game`, `/api/trpc`, statik sunum)
-- `server/routers.ts` — tRPC yönlendiricisi (şablon artığı; oyun için gerekli değil)
-- `drizzle/` + `server/db.ts` — şablon artığı; oyun veritabanı kullanmaz
-
-## Üretimde çalıştırma
+## Yayınlama (Firebase Hosting)
 
 ```bash
-pnpm install --frozen-lockfile
+npm i -g firebase-tools
+firebase login
+cp .firebaserc.example .firebaserc   # Windows: copy ...
+# .firebaserc içindeki OYUNODA-PROJE-ID-BURAYA yerine proje kimliğini yazın
 pnpm build
-PORT=3000 pnpm start
+firebase deploy --only database,hosting
 ```
 
-### Docker
-
-```bash
-docker build -t oyunoda .
-docker run -p 3000:3000 -e PORT=3000 oyunoda
-```
-
-`Dockerfile` çok aşamalı değildir; `pnpm build` imaj içinde çalışır ve `node dist/index.js` ile servis edilir.
-
-### Render / Railway / VPS notları
-
-- Başlangıç komutu: `pnpm start` (öncesinde `pnpm build` çalışmış olmalı)
-- Ortam değişkeni: `PORT` (sağlayıcının verdiği porta ayarlayın)
-- Kalıcı disk / veritabanı gerekmez; odalar bellek içidir
-- SSE kullanıldığı için yanıtları tamponlayan bir proxy varsa `X-Accel-Buffering: no` ve uzun bağlantılara izin verildiğinden emin olun
+`firebase.json`: `dist/public` klasörünü yayınlar, SPA yönlendirmesi (`**` → `/index.html`) içerir.
 
 ## GitHub'a yükleme
 
 ```bash
-git init
 git add .
-git commit -m "Oyun Odası ilk sürüm"
+git commit -m "Firebase Realtime Database gecisi"
 git branch -M main
 git remote add origin https://github.com/KULLANICI/oyunoda.git
 git push -u origin main
 ```
 
-`main` dalına her push/PR'de `pnpm check`, `pnpm test` ve `pnpm build` otomatik çalışır (`.github/workflows/ci.yml`).
+`.firebaserc` (gerçek proje kimliği) ve `.env` (API anahtarları) bilinçli olarak commit dışıdır. `main` dalına her push/PR'de `pnpm check`, `pnpm test` ve `pnpm build` otomatik çalışır (`.github/workflows/ci.yml`).
+
+## Proje yapısı
+
+- `client/src/pages/Home.tsx` — giriş, lobi, oyun ekranları, sonuç ve rövanş arayüzü
+- `client/src/lib/rooms.ts` — RTDB oda işlemleri + tur sürücüsü
+- `client/src/lib/firebase.ts` — Firebase başlatma + anonim giriş
+- `shared/game.ts` — saf oyun kuralları ve puanlama (+ `shared/game.test.ts`)
+- `database.rules.json` — Realtime Database güvenlik kuralları
+- `firebase.json` — Hosting + database dağıtım yapılandırması
 
 ## Lisans
 

@@ -24,7 +24,7 @@ Her odada 2–8 kişi oynar. Odalar Firebase'de tutulur; kalıcı profil veya he
 ## Mimari
 
 - **İstemci:** React + Vite + TypeScript (`client/`), statik derlenir → `dist/public/`
-- **Veri:** Firebase Realtime Database — `rooms/{kod}/{meta, players, round, recap}` + `secrets/{kod}` (tur sırları)
+- **Veri:** Firebase Realtime Database — `oyunoda/rooms/{kod}/{meta, players, round, recap}` + `oyunoda/secrets/{kod}` (tur sırları)
 - **Kimlik:** Firebase Anonymous Auth (her oyuncunun uid'si oyuncu kimliğidir)
 - **Senkron:** RTDB dinleyicileri (`onValue`); kritik faz geçişleri transaction ile tek-kazananlı
 - **Sürücü:** Süre bitimi, sayı gizleme, tur ilerletme ve çiz-hakemliği bağlı tüm istemcilerde çalışır (`startDriver`); yarışı kazanan transaction yazar

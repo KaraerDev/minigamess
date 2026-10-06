@@ -95,8 +95,8 @@ export type Profile = { nickname: string; avatar: string };
 // ---------------------------------------------------------------------------
 // RTDB şeması:
 //
-//   rooms/{kod}/{meta, players, round, recap}   (giriş yapmış herkes okur)
-//   secrets/{kod}                               (tur sırrı; kuralla korumalı)
+//   oyunoda/rooms/{kod}/{meta, players, round, recap} (giriş yapmış herkes okur)
+//   oyunoda/secrets/{kod}                             (tur sırrı; kuralla korumalı)
 // ---------------------------------------------------------------------------
 
 type DbRoom = {
@@ -123,8 +123,8 @@ type DbRoom = {
 
 type DbSecret = { word?: string; target?: string } | null;
 
-const roomRef = (code: string) => ref(getDb(), `rooms/${code}`);
-const secretRef = (code: string) => ref(getDb(), `secrets/${code}`);
+const roomRef = (code: string) => ref(getDb(), `oyunoda/rooms/${code}`);
+const secretRef = (code: string) => ref(getDb(), `oyunoda/secrets/${code}`);
 
 /** Kök referansa çok-yollu yazım (rooms/* + secrets/* atomik güncellenir). */
 function rootUpdate(patch: Record<string, unknown>): Promise<void> {
@@ -230,10 +230,10 @@ export async function ensurePlayerUidSafe(): Promise<string> {
 async function claimCode(): Promise<string> {
   const db = getDb();
   for (let attempt = 0; attempt < 12; attempt++) {
-    const existing = await get(ref(db, "rooms"));
+    const existing = await get(ref(db, "oyunoda/rooms"));
     const taken = (code: string) => Boolean((existing.val() as Record<string, unknown> | null)?.[code]);
     const code = randomCode(taken);
-    const result = await runTransaction(ref(db, `rooms/${code}/meta`), (current) => {
+    const result = await runTransaction(ref(db, `oyunoda/rooms/${code}/meta`), (current) => {
       if (current) return undefined; // başkası kapmış, vazgeç
       return { __claimed: true };
     });
@@ -253,7 +253,7 @@ export async function createRoom(
   const safeGame: GameId = validGame(gameId) ? gameId : "draw";
   const safeRounds = VALID_ROUNDS.includes(rounds) ? rounds : 3;
   await rootUpdate({
-    [`rooms/${code}/meta`]: {
+    [`oyunoda/rooms/${code}/meta`]: {
       gameId: safeGame,
       rounds: safeRounds,
       status: "lobby",
@@ -263,10 +263,10 @@ export async function createRoom(
       createdAt: Date.now(),
       endsAt: null,
     },
-    [`rooms/${code}/players/${uid}`]: { nickname, avatar, score: 0, ready: true },
-    [`rooms/${code}/round`]: null,
-    [`rooms/${code}/recap`]: null,
-    [`secrets/${code}`]: null,
+    [`oyunoda/rooms/${code}/players/${uid}`]: { nickname, avatar, score: 0, ready: true },
+    [`oyunoda/rooms/${code}/round`]: null,
+    [`oyunoda/rooms/${code}/recap`]: null,
+    [`oyunoda/secrets/${code}`]: null,
   });
   return { code, uid };
 }
@@ -339,7 +339,7 @@ export async function toggleReady(code: string, uid: string): Promise<void> {
   if (room?.meta?.status !== "lobby" || !room.players?.[uid]) {
     throw new Error("Hazırlık lobisi artık açık değil.");
   }
-  await rootUpdate({ [`rooms/${code}/players/${uid}/ready`]: !room.players[uid].ready });
+  await rootUpdate({ [`oyunoda/rooms/${code}/players/${uid}/ready`]: !room.players[uid].ready });
 }
 
 export async function updateSettings(
@@ -347,25 +347,25 @@ export async function updateSettings(
   uid: string,
   values: { gameId?: GameId; rounds?: number },
 ): Promise<void> {
-  const snap = await get(ref(getDb(), `rooms/${code}/meta`));
+  const snap = await get(ref(getDb(), `oyunoda/rooms/${code}/meta`));
   const meta = snap.val() as DbRoom["meta"];
   if (!meta || meta.status !== "lobby") throw new Error("Oyun ayarları yalnızca lobide değiştirilebilir.");
   if (meta.ownerId !== uid) throw new Error("Oyun ayarlarını yalnızca oda sahibi değiştirebilir.");
   const patch: Record<string, unknown> = {};
   if (values.gameId !== undefined) {
     if (!validGame(values.gameId)) throw new Error("Geçerli bir oyun seç.");
-    patch[`rooms/${code}/meta/gameId`] = values.gameId;
+    patch[`oyunoda/rooms/${code}/meta/gameId`] = values.gameId;
   }
   if (values.rounds !== undefined) {
     if (!VALID_ROUNDS.includes(values.rounds)) throw new Error("Tur sayısı 3, 5 veya 8 olabilir.");
-    patch[`rooms/${code}/meta/rounds`] = values.rounds;
+    patch[`oyunoda/rooms/${code}/meta/rounds`] = values.rounds;
   }
   if (Object.keys(patch).length) await rootUpdate(patch);
 }
 
 /** Faz geçişini transaction ile tek-kazananlı yapar. */
 async function claimPhase(code: string, from: string, to: string): Promise<boolean> {
-  const result = await runTransaction(ref(getDb(), `rooms/${code}/meta`), (meta) => {
+  const result = await runTransaction(ref(getDb(), `oyunoda/rooms/${code}/meta`), (meta) => {
     const m = meta as DbRoom["meta"] | null;
     if (!m || m.phase !== from) return undefined;
     return { ...m, phase: to };
@@ -394,19 +394,19 @@ export async function startGame(code: string, uid: string): Promise<void> {
   if (!(await claimPhase(code, "lobby", "round"))) throw new Error("Oyun zaten başlatılmış.");
   const endsAt = Date.now() + durationMs;
   await rootUpdate({
-    ...Object.fromEntries(players.map((p) => [`rooms/${code}/players/${p.id}/score`, 0])),
-    ...Object.fromEntries(players.map((p) => [`rooms/${code}/players/${p.id}/ready`, false])),
-    [`rooms/${code}/meta/status`]: "playing",
-    [`rooms/${code}/meta/round`]: 1,
-    [`rooms/${code}/meta/endsAt`]: endsAt,
-    ...prefixed(`rooms/${code}/round`, {
+    ...Object.fromEntries(players.map((p) => [`oyunoda/rooms/${code}/players/${p.id}/score`, 0])),
+    ...Object.fromEntries(players.map((p) => [`oyunoda/rooms/${code}/players/${p.id}/ready`, false])),
+    [`oyunoda/rooms/${code}/meta/status`]: "playing",
+    [`oyunoda/rooms/${code}/meta/round`]: 1,
+    [`oyunoda/rooms/${code}/meta/endsAt`]: endsAt,
+    ...prefixed(`oyunoda/rooms/${code}/round`, {
       ...stripSecrets(data),
       number: 1,
       totalRounds: room.meta.rounds ?? 3,
       endsAt,
     }),
-    [`secrets/${code}`]: secret,
-    [`rooms/${code}/recap`]: null,
+    [`oyunoda/secrets/${code}`]: secret,
+    [`oyunoda/rooms/${code}/recap`]: null,
   });
 }
 
@@ -444,7 +444,7 @@ export async function playAgain(code: string, uid: string): Promise<void> {
   await rootUpdate({
     ...Object.fromEntries(
       Object.keys(room.players ?? {}).map((id) => [
-        `rooms/${code}/players/${id}`,
+        `oyunoda/rooms/${code}/players/${id}`,
         {
           nickname: room.players?.[id]?.nickname ?? "Oyuncu",
           avatar: room.players?.[id]?.avatar ?? AVATARS[0],
@@ -453,13 +453,13 @@ export async function playAgain(code: string, uid: string): Promise<void> {
         },
       ]),
     ),
-    [`rooms/${code}/meta/status`]: "lobby",
-    [`rooms/${code}/meta/phase`]: "lobby",
-    [`rooms/${code}/meta/round`]: 0,
-    [`rooms/${code}/meta/endsAt`]: null,
-    [`rooms/${code}/round`]: null,
-    [`rooms/${code}/recap`]: null,
-    [`secrets/${code}`]: null,
+    [`oyunoda/rooms/${code}/meta/status`]: "lobby",
+    [`oyunoda/rooms/${code}/meta/phase`]: "lobby",
+    [`oyunoda/rooms/${code}/meta/round`]: 0,
+    [`oyunoda/rooms/${code}/meta/endsAt`]: null,
+    [`oyunoda/rooms/${code}/round`]: null,
+    [`oyunoda/rooms/${code}/recap`]: null,
+    [`oyunoda/secrets/${code}`]: null,
   });
 }
 
@@ -476,14 +476,14 @@ export async function pushStroke(code: string, uid: string, stroke: Stroke): Pro
   }
   if (round.drawerId !== uid) throw new Error("Bu turda kalem çizerde.");
   const strokes = [...(round.strokes ?? []), stroke].slice(-80);
-  await rootUpdate({ [`rooms/${code}/round/strokes`]: strokes });
+  await rootUpdate({ [`oyunoda/rooms/${code}/round/strokes`]: strokes });
 }
 
 export async function clearBoard(code: string, uid: string): Promise<void> {
   const snap = await get(roomRef(code));
   const room = snap.val() as DbRoom | null;
   if (room?.round?.drawerId !== uid) throw new Error("Tahtayı bu turdaki çizer temizleyebilir.");
-  await rootUpdate({ [`rooms/${code}/round/strokes`]: [] });
+  await rootUpdate({ [`oyunoda/rooms/${code}/round/strokes`]: [] });
 }
 
 /** Çiz-tahmin: tahmin yazılır; sonucu çizer-istemci hakem olarak işler. */
@@ -498,7 +498,7 @@ export async function submitDrawGuess(code: string, uid: string, guess: string):
   }
   if (round.drawerId === uid) throw new Error("Çizer bu turda kelimeyi biliyor zaten.");
   if ((round.correctOrder ?? []).includes(uid)) throw new Error("Kelimeyi zaten buldun!");
-  await rootUpdate({ [`rooms/${code}/round/guesses/${uid}`]: { text, at: Date.now() } });
+  await rootUpdate({ [`oyunoda/rooms/${code}/round/guesses/${uid}`]: { text, at: Date.now() } });
 }
 
 export async function submitWords(code: string, uid: string, answers: Record<string, string>): Promise<void> {
@@ -533,7 +533,7 @@ async function submitOnce(code: string, uid: string, gameId: GameId, value: unkn
   if ((round.submissions as Record<string, unknown> | undefined)?.[uid]) {
     throw new Error("Cevabın bu tur için kaydedildi.");
   }
-  const result = await runTransaction(ref(getDb(), `rooms/${code}/round/submissions/${uid}`), (current) => {
+  const result = await runTransaction(ref(getDb(), `oyunoda/rooms/${code}/round/submissions/${uid}`), (current) => {
     if (current) return undefined;
     return { value, at: Date.now() };
   });
@@ -577,7 +577,7 @@ export function startDriver(code: string, uid: string): () => void {
         later(MEMORY_HIDE_AFTER, async () => {
           const cur = (await get(roomRef(code))).val() as DbRoom | null;
           if (cur?.meta?.phase === "round" && cur.round && !cur.round.memoryHidden) {
-            await rootUpdate({ [`rooms/${code}/round/memoryHidden`]: true });
+            await rootUpdate({ [`oyunoda/rooms/${code}/round/memoryHidden`]: true });
           }
         });
       }
@@ -623,13 +623,13 @@ async function judgeDrawGuesses(code: string, uid: string, judged: Set<string>):
       correctOrder.push(pid);
       const endsAt = (round.endsAt ?? room.meta?.endsAt ?? Date.now()) as number;
       const points = drawGuessPoints(endsAt, guess.at ?? Date.now());
-      await runTransaction(ref(getDb(), `rooms/${code}/players/${pid}/score`), (s) => ((s as number) ?? 0) + points);
+      await runTransaction(ref(getDb(), `oyunoda/rooms/${code}/players/${pid}/score`), (s) => ((s as number) ?? 0) + points);
       await rootUpdate({
-        [`rooms/${code}/round/correctOrder`]: correctOrder,
-        [`rooms/${code}/round/results/${pid}`]: { correct: true, at: Date.now() },
+        [`oyunoda/rooms/${code}/round/correctOrder`]: correctOrder,
+        [`oyunoda/rooms/${code}/round/results/${pid}`]: { correct: true, at: Date.now() },
       });
     } else {
-      await rootUpdate({ [`rooms/${code}/round/results/${pid}`]: { correct: false, at: Date.now() } });
+      await rootUpdate({ [`oyunoda/rooms/${code}/round/results/${pid}`]: { correct: false, at: Date.now() } });
     }
   }
   const current = (await get(roomRef(code))).val() as DbRoom | null;
@@ -675,12 +675,12 @@ export async function finishRound(code: string, message = "Süre doldu!"): Promi
   const roundNumber = (room.round.number ?? room.meta.round ?? 1) as number;
   await rootUpdate({
     ...Object.fromEntries(
-      players.map((p) => [`rooms/${code}/players/${p.id}/score`, p.score + (gained[p.id] ?? 0)]),
+      players.map((p) => [`oyunoda/rooms/${code}/players/${p.id}/score`, p.score + (gained[p.id] ?? 0)]),
     ),
-    [`rooms/${code}/meta/phase`]: "recap",
-    [`rooms/${code}/meta/endsAt`]: Date.now() + RECAP_DURATION,
-    [`rooms/${code}/round/submissions`]: submissions,
-    [`rooms/${code}/recap`]: { title: `${roundNumber}. turun özeti`, message, details },
+    [`oyunoda/rooms/${code}/meta/phase`]: "recap",
+    [`oyunoda/rooms/${code}/meta/endsAt`]: Date.now() + RECAP_DURATION,
+    [`oyunoda/rooms/${code}/round/submissions`]: submissions,
+    [`oyunoda/rooms/${code}/recap`]: { title: `${roundNumber}. turun özeti`, message, details },
   });
 }
 
@@ -699,10 +699,10 @@ async function advanceFrom(room: DbRoom, code: string): Promise<void> {
   const current = meta.round ?? 0;
   if (current >= totalRounds) {
     await rootUpdate({
-      [`rooms/${code}/meta/status`]: "finished",
-      [`rooms/${code}/meta/phase`]: "finished",
-      [`rooms/${code}/meta/endsAt`]: null,
-      [`rooms/${code}/recap`]: {
+      [`oyunoda/rooms/${code}/meta/status`]: "finished",
+      [`oyunoda/rooms/${code}/meta/phase`]: "finished",
+      [`oyunoda/rooms/${code}/meta/endsAt`]: null,
+      [`oyunoda/rooms/${code}/recap`]: {
         title: "Son düdük!",
         message: "Piknik örtüsünde günün yıldızı belli oldu.",
         details: (room.recap?.details ?? []) as string[],
@@ -721,16 +721,16 @@ async function advanceFrom(room: DbRoom, code: string): Promise<void> {
   const { data, secret, durationMs } = createRound(gameId, current + 1, players);
   const endsAt = Date.now() + durationMs;
   await rootUpdate({
-    [`rooms/${code}/meta/phase`]: "round",
-    [`rooms/${code}/meta/round`]: current + 1,
-    [`rooms/${code}/meta/endsAt`]: endsAt,
-    ...prefixed(`rooms/${code}/round`, {
+    [`oyunoda/rooms/${code}/meta/phase`]: "round",
+    [`oyunoda/rooms/${code}/meta/round`]: current + 1,
+    [`oyunoda/rooms/${code}/meta/endsAt`]: endsAt,
+    ...prefixed(`oyunoda/rooms/${code}/round`, {
       ...stripSecrets(data),
       number: current + 1,
       totalRounds,
       endsAt,
     }),
-    [`secrets/${code}`]: secret,
-    [`rooms/${code}/recap`]: null,
+    [`oyunoda/secrets/${code}`]: secret,
+    [`oyunoda/rooms/${code}/recap`]: null,
   });
 }
